@@ -1,0 +1,6 @@
+runpod
+mistral_common
+torch
+transformers
+accelerate
+sentencepiece
