@@ -1,6 +1,11 @@
-# inference.py
-# This file will contain the code that runs Mistral on RunPod
+import runpod
 
-def handler(event):
-    # For now, just return a placeholder message
-    return {"message": "Hello from Mistral RunPod endpoint!"}
+# Define your handler (this runs whenever a job comes in)
+def handler(job):
+    prompt = job["input"].get("prompt", "No prompt provided.")
+    return {"response": f"Echo: {prompt}"}
+
+# Tell RunPod to keep the server alive and wait for jobs
+runpod.serverless.start({"handler": handler})
+
+
