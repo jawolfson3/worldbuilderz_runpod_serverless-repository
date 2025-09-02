@@ -28,7 +28,7 @@ logging.info(f"Loading model {model_id}...")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.float16, #changed from bfloat to float to run on L4
+    dtype=torch.float16,  # fixed deprecation
     device_map="auto"
 )
 
@@ -45,76 +45,77 @@ logging.info("Model loaded successfully.")
 # --------------------------------------------------------
 def handler(job):
     try:
-        # Validate job input
         if "input" not in job or not isinstance(job["input"], dict):
-            logging.warning("Job missing 'input' object.")
             return {"error": "Job must include an 'input' object."}
 
         input_data = job["input"]
 
-        # Prompt validation
-        prompt = input_data.get("prompt", None)
-        if prompt is None:
-            logging.warning("No prompt provided in job.")
-            return {"error": "No prompt provided."}
-        if not isinstance(prompt, str):
-            logging.warning(f"Invalid prompt type: {type(prompt)}")
-            return {"error": "Prompt must be a string."}
-        if not prompt.strip():
-            logging.warning("Prompt was empty.")
-            return {"error": "Prompt cannot be empty."}
+        # Required generation params
+        max_new_tokens = input_data.get("max_new_tokens")
+        temperature = input_data.get("temperature")
+        do_sample = input_data.get("do_sample", False)  # toggle, default False
 
-        # Token length validation
-        tokens = tokenizer.encode(prompt)
-        if len(tokens) > 30000:
-            logging.warning(f"Prompt too long: {len(tokens)} tokens.")
-            return {
-                "error": f"Prompt too long. Max supported tokens ≈ 30000, received {len(tokens)}."
-            }
-
-        # Required params from input
-        if "max_new_tokens" not in input_data:
-            logging.warning("Missing 'max_new_tokens' in input.")
-            return {"error": "Missing required field: max_new_tokens"}
-        if "temperature" not in input_data:
-            logging.warning("Missing 'temperature' in input.")
-            return {"error": "Missing required field: temperature"}
-
-        max_new_tokens = input_data["max_new_tokens"]
-        temperature = input_data["temperature"]
-
-        # Validate parameter types
         if not isinstance(max_new_tokens, int) or max_new_tokens <= 0:
             return {"error": "'max_new_tokens' must be a positive integer"}
         if not isinstance(temperature, (int, float)) or not (0.0 <= temperature <= 1.0):
-            return {"error": "'temperature' must be a number between 0.0 and 1.0"}
+            return {"error": "'temperature' must be between 0.0 and 1.0"}
+
+        # --- Prompt Assembly ---
+        if "instruction" in input_data and "context" in input_data:
+            instruction = input_data["instruction"]
+            context = input_data["context"]
+
+            if not isinstance(instruction, str) or not instruction.strip():
+                return {"error": "Instruction must be a non-empty string."}
+            if not isinstance(context, str) or not context.strip():
+                return {"error": "Context must be a non-empty string."}
+
+            formatted_prompt = f"<s>[INST] {instruction.strip()}\n\n{context.strip()} [/INST]"
+        elif "prompt" in input_data:
+            prompt = input_data["prompt"]
+            if not isinstance(prompt, str) or not prompt.strip():
+                return {"error": "Prompt must be a non-empty string."}
+            formatted_prompt = f"<s>[INST] {prompt.strip()} [/INST]"
+        else:
+            return {"error": "Must provide either 'prompt' or ('instruction' + 'context')."}
+
+        # Token length validation
+        tokens = tokenizer.encode(formatted_prompt)
+        if len(tokens) > 30000:
+            return {"error": f"Prompt too long. Max supported tokens ≈ 30000, got {len(tokens)}."}
 
         logging.info(
-            f"Processing prompt of {len(tokens)} tokens with max_new_tokens={max_new_tokens}, temperature={temperature}"
+            f"Processing {len(tokens)} tokens | max_new_tokens={max_new_tokens}, "
+            f"temperature={temperature}, do_sample={do_sample}"
         )
 
         # Run inference
         outputs = generator(
-            prompt,
+            formatted_prompt,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
-            do_sample=False
+            do_sample=do_sample
         )
 
         response_text = outputs[0]["generated_text"]
+
+        # Strip echoed prompt if still included
+        if response_text.startswith(formatted_prompt):
+            response_text = response_text[len(formatted_prompt):].strip()
+
         logging.info("Generation completed successfully.")
         return {"response": response_text}
 
-    except RuntimeError as e:
-        # GPU-related errors (like out of memory)
+    except RuntimeError:
         logging.error("GPU runtime error", exc_info=True)
         return {"error": "Internal error: contact support"}
-    except Exception as e:
-        # Unexpected errors
+    except Exception:
         logging.exception("Unexpected error during handler execution")
         return {"error": "Internal error: contact support"}
+
 
 # --------------------------------------------------------
 # Keep server alive for RunPod
 # --------------------------------------------------------
 runpod.serverless.start({"handler": handler})
+
