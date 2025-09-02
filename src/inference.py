@@ -20,7 +20,7 @@ logging.info(f"Loading model {model_id}...")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.bfloat16,
+    torch_dtype=torch.float16, #changed from bfloat to float to run on L4
     device_map="auto"
 )
 
