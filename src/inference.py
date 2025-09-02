@@ -2,6 +2,14 @@ import runpod
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 import logging
+import os
+from huggingface_hub import login
+
+# Ensure HF token is passed explicitly
+token = os.environ.get("HUGGINGFACE_HUB_TOKEN")
+if not token:
+    raise ValueError("HUGGINGFACE_HUB_TOKEN not found in environment variables")
+login(token=token)
 
 # --------------------------------------------------------
 # Configure logging
